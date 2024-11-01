@@ -16,7 +16,7 @@ function free_energy_dofs(sys, calc, dofmgr, Temp, s0, x)
     XX_flat = reduce(vcat, nlist.X)
     EE = ustrip(potential_energy(sys, calc))
     if Temp > 0
-        return EE - Temp * (s0-kb2ev*(entropyonlyentropy(sys,XX_flat,ℓ)[1]))
+        return EE - Temp * (s0-kb2ev*(entropy_onlyentropy(sys,XX_flat,ℓ)[1]))
     else
         return EE
     end
@@ -24,11 +24,11 @@ end
 
 function FE_gradient_dofs(sys, calc, dofmgr,Temp, x::AbstractVector{T}) where {T} 
     set_dofs!(sys, dofmgr, x)
-    nlist = EmpiricalPotentials.PairList(sys, cutoff_radius(StillingerWeber()))
+    nlist = EmpiricalPotentials.PairList(sys, cutoff_radius(sw))
     XX_flat = reduce(vcat, nlist.X)
     ∇E = GO.gradient_dofs(sys, calc, dofmgr, x)
     if Temp > 0 
-        return ∇E - Temp*kb2ev*entropyonlygradient(sys,XX_flat,ℓ)[1]
+        return ∇E - Temp*kb2ev*entropy_onlygradient(sys,XX_flat,ℓ)[1]
     else
         return ∇E
     end
@@ -43,7 +43,7 @@ end
 # Setup
 Random.seed!(100)
 AtomsBase.atomic_number(sys::SoaSystem, i::Integer) = sys.arrays.𝑍[i]
-sw = StillingerWeber()  # empirical potential
+sw = EmpiricalPotentials.StillingerWeber()  # empirical potential
 kb2ev = 8.617333262 * 1e-5  # conversion factor
 ℓ = 30  # number of quadrature points in the contour integral
 
@@ -52,7 +52,7 @@ r0 = AtomsBuilder.Chemistry.rnn(:Si)
 sys0 = AosSystem( AtomsBuilder.bulk(:Si, cubic=true, pbc=true))
 nlist0 = EmpiricalPotentials.PairList(sys0, cutoff_radius(StillingerWeber()))
 XX_0 = reduce(vcat, nlist0.X)
-S_0 = kb2ev * entropyonlyentropy(sys0,XX_0,ℓ)[1]
+S_0 = kb2ev * entropy_onlyentropy(sys0,XX_0,ℓ)[1]
 # Sanity check that x2 is a nearest-neighbour of x1
 @assert norm(position(sys0, 1)) == 0u"Å"
 @assert norm(position(sys0, 2)) <= 1.0001 * r0
@@ -72,7 +72,7 @@ path_init = [ (sys = deepcopy(sys0); set_position!(sys, 1, (1-t)*old+t*𝐫2); s
                for t in range(0.0, 1.0, length = Nimg) ]
 nlist = EmpiricalPotentials.PairList.(path_init, cutoff_radius(StillingerWeber()))
 XX_flat = [reduce(vcat, ttn.X) for ttn in nlist]
-S = [s for s in entropyonlyentropy.(path_init,XX_flat,ℓ)]
+S = [s for s in entropy_onlyentropy.(path_init,XX_flat,ℓ)]
 δS = -1*(kb2ev* S .- S_0)
 Temp = 0
 F_init = ustrip(potential_energy.(path_init, Ref(calc))) - Temp*δS

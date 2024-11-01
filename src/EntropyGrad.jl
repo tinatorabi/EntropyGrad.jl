@@ -179,7 +179,7 @@ module EntropyGrad begin
         return -8 * K *  (m * M)^(1/4) * imag(S) / (k * π * ℓ)
     end
 
-    function entropyonlyentropy(sys, x, ℓ)
+    function entropy_onlyentropy(sys, x, ℓ)
         nlist = EmpiricalPotentials.PairList(sys, cutoff_radius(StillingerWeber())) 
         info = [EmpiricalPotentials.get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
         Js_ = [element[1] for element in info]
@@ -191,7 +191,7 @@ module EntropyGrad begin
         return compute_S(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints, ℓ)
     end
 
-    function entropyonlygradient(sys, x, ℓ)
+    function entropy_onlygradient(sys, x, ℓ)
         nlist = EmpiricalPotentials.PairList(sys, cutoff_radius(StillingerWeber())) 
         info = [EmpiricalPotentials.get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
         Js_ = [element[1] for element in info]
@@ -204,7 +204,7 @@ module EntropyGrad begin
         return Zygote.gradient(S,x)
     end
     
-    function entropywithgradient(sys, x, ℓ)
+    function entropy_withgradient(sys, x, ℓ)
         nlist = EmpiricalPotentials.PairList(sys, cutoff_radius(StillingerWeber())) 
         info = [EmpiricalPotentials.get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
         Js_ = [element[1] for element in info]
@@ -217,7 +217,7 @@ module EntropyGrad begin
         return Zygote.withgradient(S,x)
     end
 
-    function entropywithgradient_hess(sys, x, ℓ)
+    function entropy_withgradientandhess(sys, x, ℓ)
         nlist = EmpiricalPotentials.PairList(sys, cutoff_radius(StillingerWeber())) 
         info = [EmpiricalPotentials.get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
         Js_ = [element[1] for element in info]

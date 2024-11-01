@@ -141,10 +141,11 @@ err10,err15,err20,err25 = [], [], [], []
 fdticks = [1, 0.1 , 0.01, 0.001, 0.0001, 1e-5]
 for hh in fdticks
     X = fd_hessian_sqrt(cc, u, hh)
-    push!(err10,norm(contour_diff(HH, dHdU(cc,u),10)- X))
-    push!(err15,norm(contour_diff(HH, dHdU(cc,u),15)- X))
-    push!(err20,norm(contour_diff(HH, dHdU(cc,u),20)- X))
-    push!(err25,norm(contour_diff(HH, dHdU(cc,u),25)- X))
+    dHdU_test = dHdU(cc,u)
+    push!(err10,norm(contour_diff(HH,dHdU_test,10)-X))
+    push!(err15,norm(contour_diff(HH,dHdU_test,15)-X))
+    push!(err20,norm(contour_diff(HH,dHdU_test,20)-X))
+    push!(err25,norm(contour_diff(HH,dHdU_test,25)-X))
 end
 
 # Plot errors compared to finite difference approach
