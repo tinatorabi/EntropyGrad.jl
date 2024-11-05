@@ -47,12 +47,13 @@ sw = EmpiricalPotentials.StillingerWeber()  # empirical potential
 kb2ev = 8.617333262 * 1e-5  # conversion factor
 ℓ = 30  # number of quadrature points in the contour integral
 
-# Pick an arbitrary FCC system (needs to be closed-packed
+# Pick an arbitrary FCC system (needs to be closed-packed)
 r0 = AtomsBuilder.Chemistry.rnn(:Si)
 sys0 = AosSystem( AtomsBuilder.bulk(:Si, cubic=true, pbc=true))
-nlist0 = EmpiricalPotentials.PairList(sys0, cutoff_radius(StillingerWeber()))
+nlist0 = EmpiricalPotentials.PairList(sys0, cutoff_radius(EmpiricalPotentials.StillingerWeber()))
 XX_0 = reduce(vcat, nlist0.X)
 S_0 = kb2ev * entropy_onlyentropy(sys0,XX_0,ℓ)[1]
+
 # Sanity check that x2 is a nearest-neighbour of x1
 @assert norm(position(sys0, 1)) == 0u"Å"
 @assert norm(position(sys0, 2)) <= 1.0001 * r0
@@ -65,8 +66,8 @@ zU = AtomsBase.atomic_number(sys0, 1)
 sw = StillingerWeber() 
 calc = sw
 
-# generate an initial guess for the MEP 
-Nimg = 50
+# Generate an initial guess for the MEP 
+Nimg = 10
 old = deepcopy(position(sys0,1))
 path_init = [ (sys = deepcopy(sys0); set_position!(sys, 1, (1-t)*old+t*𝐫2); sys)
                for t in range(0.0, 1.0, length = Nimg) ]
@@ -77,7 +78,7 @@ S = [s for s in entropy_onlyentropy.(path_init,XX_flat,ℓ)]
 Temp = 0
 F_init = ustrip(potential_energy.(path_init, Ref(calc))) - Temp*δS
 
-T = [0, 200] # Temperatures that will be tested. 
+T = [0, 100, 200] # Temperatures that will be tested. 
 # Careful, depending on your system this can be quick or slow. Try with only a few temperatures first.
 global Estring = []
 global xx_string

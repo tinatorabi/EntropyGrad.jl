@@ -5,6 +5,8 @@ using GeomOpt:DofManager, set_dofs!
 using AtomsCalculators: virial, forces, potential_energy
 import Random
 
+using EntropyGrad
+
 # Setup
 GO = GeomOpt      
 DP = DecoratedParticles
@@ -98,7 +100,7 @@ F_init = ustrip(potential_energy.(path_init, Ref(calc))) - Temp*δS
 δF_init = round.( F_init .- F_init[1], digits=4)
 
 # Loop over temperatures and compute paths
-T = [0, 50 , 100 , 200]
+T = [0, 100 , 200]
 global Estring = []
 global xx_string
 sysoriginal = deepcopy(sys0) # Keep original configuration accessible
