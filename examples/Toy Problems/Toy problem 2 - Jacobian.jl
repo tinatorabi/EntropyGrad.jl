@@ -1,9 +1,9 @@
 using LinearAlgebra, Zygote, Symbolics, SymbolicUtils, BenchmarkTools
-using ComplexElliptic, ForwardDiff, Elliptic, SparseArrays, SparseDiffTools
+using ComplexElliptic, ForwardDiff, Elliptic, IterativeSolvers, LinearMaps, SparseArrays, SparseDiffTools
 using Elliptic.Jacobi: sn, cn, dn
 import ComplexElliptic.ellipjc
 import ComplexElliptic.ellipkkp
-using Plots, LaTeXStrings
+using Plots
 
 # Define a toy energy function, see the example in Section 4.3 of the companion paper
 function energy(c, u, ε=1e-3)
@@ -32,8 +32,7 @@ function createC(n)
     return c1
 end
 
-# AD-based Hessians
-H_zyg(c, u) = Zygote.hessian(u -> energy(c, u), u)
+# AD-based Hessian
 H_fwd(c, u) = ForwardDiff.hessian(u -> energy(c, u), u)
 
 function dHdU(C,u) # with coloring
@@ -66,9 +65,15 @@ function dHdU_wo(C,u) # w/o coloring
 end
 
 function contour_diff(A, dhdu, N) # dhdu can be with coloring or without, i.e. dHdU_wo or dHdU 
-    e = eigvals(A)
-    m = minimum(e)
-    M = maximum(e)
+    # Use power method to estimate max eigenvalue
+    M = real(IterativeSolvers.powm(A)[1])
+    # Use shifted inverse power method to estimate min eigenvalue of SPD matrix
+    F = lu(complex(A))
+    Fmap = LinearMap{complex(Float64)}((y, x) -> ldiv!(y, F, x), size(A, 1), ismutating = true)
+    m = real(invpowm(Fmap; shift=0., log=false)[1])
+    if m < 1e-10
+        m = 1.
+    end
     k = ((M/m)^(1/4) - 1) / ((M/m)^(1/4) + 1)
     L = -log(k) / π
     K, Kp = ellipkkp(L)
@@ -80,7 +85,8 @@ function contour_diff(A, dhdu, N) # dhdu can be with coloring or without, i.e. d
 
     for ℓ in 1:size(dS)[1]
         for j in 1:N
-            dS[:,:,ℓ] += (sqrt(w[j]^2) * w[j]) * inv(w[j]^2 * I - A)* dhdu[:,:,ℓ] * inv(w[j]^2 * I - A) * dzdt[j]
+            Rz = (w[j]^2 * I - A)
+            dS[:,:,ℓ] += sqrt(w[j]^2) * w[j] * (Rz \ dhdu[:,:,ℓ]) / Rz * dzdt[j]
         end
     end
     dS = -8 * K * (m * M)^(1/4) * imag(dS) / (k * π * N)
@@ -106,8 +112,7 @@ function fwd_deriv_S(A, u, m, M, k, K, z, w_z)
     for ℓ in 1:length(dAdu[1,1,:])
         S = 0.0
         for (zi, wi) in zip(z, w_z)
-            Rz = pinv(zi^2 * I - A)
-            S += wi * tr(Rz * dAdu[:, :, ℓ] * Rz)
+            S += wi * tr(Rz * dAdu[:, :, ℓ] / (zi^2 * I - A))
         end
         dS[ℓ] = -8 * K * (m * M)^(1/4) * imag(S) / (k * π * N)
     end
@@ -150,16 +155,16 @@ end
 
 # Plot errors compared to finite difference approach
 ytick = [10.0^i for i in -10:2:1]
-scatter(fdticks, err10[1:end], xscale = :log10, yscale=:log10, color=1, ylabel="Errors", xlabel="Step Size", label=L"\ell=10", legend=:bottomright, marker=:o, lw=3, markersize=3,)
+scatter(fdticks, err10[1:end], xscale = :log10, yscale=:log10, color=1, ylabel="Errors", xlabel="Step Size", label="l=10", legend=:bottomright, marker=:o, lw=3, markersize=3,)
 plot!(fdticks, err10[1:end], xscale = :log10, yscale=:log10, label=false, color=1)
 yticks!(ytick)
-scatter!(fdticks, err15[1:end], label=L"\ell=15",color=2, markersize=3)
+scatter!(fdticks, err15[1:end], label="l=15",color=2, markersize=3)
 plot!(fdticks, err15[1:end],label=false, color=2)
-scatter!(fdticks, err20[1:end], label=L"\ell=20",color=3, markersize=3)
+scatter!(fdticks, err20[1:end], label="l=20",color=3, markersize=3)
 plot!(fdticks, err20[1:end],label=false, color=3)
-scatter!(fdticks, err25[1:end], label=L"\ell=25",color=4, markersize=3)
+scatter!(fdticks, err25[1:end], label="l=25",color=4, markersize=3)
 plot!(fdticks, err25[1:end],label=false, color=4)
-plot!(fdticks[3:end-1], 0.2*fdticks[3:end-1].^2, label=L"\propto x^2",linestyle=:dash,color=5)
+plot!(fdticks[3:end-1], 0.2*fdticks[3:end-1].^2, label="x^2",linestyle=:dash,color=5)
 
 
 # ------------------------------------------------------------------
@@ -170,14 +175,19 @@ sizes = [200,250,300,350]
 times_color = []
 times_nocolor = []
 
-# Loop to compute CPU timings.
+u = rand(100)
+c = createC(100)
+HH = H_fwd(c, u)
+
+# Loop to compute CPU timings. 
+# This takes a while if using BenchmarkTools, run twice to eliminate compilation.
 for size in sizes
     u = rand(size)
     c = createC(size)
     HH = H_fwd(c, u)
 
-    push!(times_color, @belapsed contour_diff($HH, dHdU($c,$u),15))
-    push!(times_nocolor, @belapsed contour_diff($HH, dHdU_wo($c,$u),15))
+    push!(times_color, @elapsed contour_diff(HH, dHdU(c,u),15))
+    push!(times_nocolor, @elapsed contour_diff(HH, dHdU_wo(c,u),15))
 end
 
 # Plot elapsed CPU time on a log-log plot to compare asymptotic rates (see paper for expectation)

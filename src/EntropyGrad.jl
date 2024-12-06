@@ -1,25 +1,32 @@
 module EntropyGrad begin
 
-    using AtomsBase, Unitful, ExtXYZ, AtomsCalculators, AtomsBuilder,
-    EmpiricalPotentials, StaticArrays, Test, JSON, ForwardDiff
+    using AtomsBase, Unitful, AtomsCalculators, AtomsBuilder,
+    EmpiricalPotentials, StaticArrays, ForwardDiff
     using AtomsCalculators.AtomsCalculatorsTesting
     using LinearAlgebra: dot, norm, I, diagm, svd
     using EmpiricalPotentials: cutoff_radius, StillingerWeber
     using AtomsCalculators: potential_energy, forces
     using NeighbourLists, Zygote, ChainRulesCore
-    using ChainRulesTestUtils, Test
-    using LinearAlgebra, Random, Distributions, Zygote
-    using ComplexElliptic, ForwardDiff, BenchmarkTools, Plots
-    using LaTeXStrings, SparseArrays, SparseDiffTools, Elliptic
+    using LinearAlgebra, Random, Distributions
+    using ComplexElliptic, ForwardDiff
+    using SparseArrays, SparseDiffTools, Elliptic, IterativeSolvers, LinearMaps
     using Elliptic.Jacobi: sn, cn, dn
     import ComplexElliptic.ellipkkp
+    using GeomOpt: DofManager, set_dofs!
 
     EP = EmpiricalPotentials
     ACT = AtomsCalculators.AtomsCalculatorsTesting
 
-    sw = StillingerWeber()
+    sw = EmpiricalPotentials.StillingerWeber()
 
-    export entropywithgradient_hess, entropywithgradient, entropyonlygradient, entropyonlyentropy
+    export entropy_withgradientandhess, entropy_withgradient, entropy_onlygradient, entropy_onlyentropy, get_obj_fg_FE, FE_gradient_dofs, free_energy_dofs, JuLIP2AtomsBuilder, get_neighbours, argsmallest
+
+    function get_neighbours(at, V, nlist, i)
+        Js, Rs = NeighbourLists.neigs(nlist, i)
+        Zs = [ DecoratedParticles.atomic_number(at, i) for j in Js ]
+        z0 = DecoratedParticles.atomic_number(at, i)
+        return Js, Rs, Zs, z0 
+     end
 
     # ellipjc is not currently reverse-AD friendly, this is a fix for that
     function Zygcompat_ellipjc(u, L; flag=false)
@@ -68,18 +75,16 @@ module EntropyGrad begin
 
         return copy(sn), copy(cn), copy(dn)
     end
-    @inline Rs2x = Rs -> reinterpret(eltype(eltype(Rs)), Rs)
-    @inline function x2Rs(x)
+    Rs2x = Rs -> reinterpret(eltype(eltype(Rs)), Rs)
+    function x2Rs(x)
         return reinterpret(SVector{3, eltype(x)}, x)
     end
-    @inline function ∇Ei(sw::StillingerWeber, x::AbstractVector{T}, Zs, z0) where T
+    function ∇Ei(sw::StillingerWeber, x::AbstractVector{T}, Zs, z0) where T
         V = reduce(vcat,(EmpiricalPotentials.eval_grad_site(sw, x2Rs(x), Zs, z0)[2]))
         return reshape(V,length(V))::Vector{T}
     end
-    @inline function eyelike(j,N,T)
-        v = zeros(T,N)
-        v[j] = one(T)
-        return v
+    function eyelike(j,N,T)
+        return T.((1:N).==j)
     end
     function ChainRulesCore.rrule(::typeof(∇Ei), sw, x, Zs, z0)
         y = ∇Ei(sw, x, Zs, z0)
@@ -94,7 +99,7 @@ module EntropyGrad begin
         return y, eval_grad_site_pullback
     end
 
-    adHzygote(sw, Rs, Zs, z0) = Zygote.jacobian(∇Ei, sw, Rs, Zs, z0)[2]  ## site hessian itself
+    adHzygote(sw, Rs, Zs, z0) = Zygote.jacobian(∇Ei, sw, Rs, Zs, z0)[2]  # site hessian itself
 
     function adHzygotepushforwardhelper(ℓ, sw, x, Zs, z0)
         φ(t1,t2,U,V) = ∇Ei(sw, x + t1 * U + t2 * V, Zs, z0)
@@ -143,21 +148,34 @@ module EntropyGrad begin
                     A2 = (α2-1) * D .+ DD
                     J1 = (js[α1]-1) * D .+ DD
                     J2 = (js[α2]-1) * D .+ DD
-                    Hess[J1, J2] += view(Hi,A1, A2)
-                    Hess[J1, Ji] -= view(Hi,A1, A2)
-                    Hess[Ji, J2] -= view(Hi,A1, A2)
-                    Hess[Ji, Ji] += view(Hi,A1, A2)
+                    Hess[J1, J2] += view(Hi, A1, A2)
+                    Hess[J1, Ji] -= view(Hi, A1, A2)
+                    Hess[Ji, J2] -= view(Hi, A1, A2)
+                    Hess[Ji, Ji] += view(Hi, A1, A2)
                 end
             end
         end
-        return copy(Hess)
+        return sparse(copy(Hess))
     end
 
 
     function conformal_map(A,ℓ)
-        e = eigvals(A)
-        m = max(minimum(e),1.0) 
-        M = maximum(e)
+        # Use power method to estimate max eigenvalue
+        # and use shifted inverse power method to estimate min eigenvalue of SPD matrix
+        m = zero(eltype(A))
+        M = zero(eltype(A))
+        try F = lu(A)
+            Fmap = LinearMap{complex(Float64)}((y, x) -> ldiv!(y, F, x), size(A, 1), ismutating = true)
+            m = real(invpowm(Fmap; shift=0., log=false)[1])
+            M = real(IterativeSolvers.powm(A)[1])
+        catch # fallback to full eigenvalue computation if estimate fails
+            e = eigvals(Matrix(A))
+            M = maximum(e)
+            m = minimum(e)
+        end
+        if m < 1e-10
+            m = 1.
+        end
         k = ((M/m)^(1/4) - 1) / ((M/m)^(1/4) + 1)
         L = -log(k) / π
         K, Kp = ellipkkp(L)
@@ -168,66 +186,96 @@ module EntropyGrad begin
         return m, M, k, K, z, log.(z.^2) .* dzdt ./ z
     end
 
-    function compute_S(Js, info, X, Zs, z0, nlist, indexcheckpoints, ℓ)
+    function compute_S(Js, info, X, Zs, z0, nlist, indexcheckpoints, ℓ, m, M, k, K, z, w_z)
         H_u = comp_hess(Js, info, X, Zs, z0, nlist, indexcheckpoints)
-        m, M, k, K, z, w_z = conformal_map(Symmetric(H_u), ℓ)
+        denseHu = Matrix(H_u) # sparse solve only defined for dense RHS. 
+        # If memory were to be a concern this could be replaced by looping over the columns of H_u
         S = 0.0
         @inbounds for (zi, wi) in zip(z, w_z)
-            Rz = lu(zi^2 * I - H_u)
-            S += wi * tr(H_u*inv(Rz))
+            S += wi * tr(denseHu/(zi^2 * I - H_u))
         end
         return -8 * K *  (m * M)^(1/4) * imag(S) / (k * π * ℓ)
     end
 
     function entropy_onlyentropy(sys, x, ℓ)
-        nlist = EmpiricalPotentials.PairList(sys, cutoff_radius(StillingerWeber())) 
-        info = [EmpiricalPotentials.get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
+        nlist = NeighbourLists.PairList(sys, cutoff_radius(StillingerWeber())) 
+        info = [get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
         Js_ = [element[1] for element in info]
         Rs_ = [element[2] for element in info]
         Zs_ = [element[3] for element in info]
         z0_ = [element[4] for element in info]
     
         indexcheckpoints = vcat(0,cumsum(length.(Rs_)))
-        return compute_S(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints, ℓ)
+        H_u = comp_hess(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints)
+        m, M, k, K, z, w_z = conformal_map(Symmetric(H_u), ℓ)
+        return compute_S(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints, ℓ, m, M, k, K, z, w_z)
     end
 
     function entropy_onlygradient(sys, x, ℓ)
-        nlist = EmpiricalPotentials.PairList(sys, cutoff_radius(StillingerWeber())) 
-        info = [EmpiricalPotentials.get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
+        nlist = NeighbourLists.PairList(sys, cutoff_radius(StillingerWeber())) 
+        info = [get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
         Js_ = [element[1] for element in info]
         Rs_ = [element[2] for element in info]
         Zs_ = [element[3] for element in info]
         z0_ = [element[4] for element in info]
     
         indexcheckpoints = vcat(0,cumsum(length.(Rs_)))
-        S(x) = compute_S(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints,ℓ)
+        H_u = comp_hess(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints)
+        m, M, k, K, z, w_z = conformal_map(Symmetric(H_u), ℓ)
+        S(x) = compute_S(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints, ℓ, m, M, k, K, z, w_z)
         return Zygote.gradient(S,x)
     end
     
     function entropy_withgradient(sys, x, ℓ)
-        nlist = EmpiricalPotentials.PairList(sys, cutoff_radius(StillingerWeber())) 
-        info = [EmpiricalPotentials.get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
+        nlist = NeighbourLists.PairList(sys, cutoff_radius(StillingerWeber())) 
+        info = [get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
         Js_ = [element[1] for element in info]
         Rs_ = [element[2] for element in info]
         Zs_ = [element[3] for element in info]
         z0_ = [element[4] for element in info]
     
         indexcheckpoints = vcat(0,cumsum(length.(Rs_)))
-        S(x) = compute_S(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints, ℓ)
+        H_u = comp_hess(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints)
+        m, M, k, K, z, w_z = conformal_map(Symmetric(H_u), ℓ)
+        S(x) = compute_S(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints, ℓ, m, M, k, K, z, w_z)
         return Zygote.withgradient(S,x)
     end
 
     function entropy_withgradientandhess(sys, x, ℓ)
-        nlist = EmpiricalPotentials.PairList(sys, cutoff_radius(StillingerWeber())) 
-        info = [EmpiricalPotentials.get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
+        nlist = NeighbourLists.PairList(sys, cutoff_radius(StillingerWeber())) 
+        info = [get_neighbours(sys, sw, nlist, i) for i in 1:length(sys)]
         Js_ = [element[1] for element in info]
         Rs_ = [element[2] for element in info]
         Zs_ = [element[3] for element in info]
         z0_ = [element[4] for element in info]
         indexcheckpoints = vcat(0,cumsum(length.(Rs_)))
-        S(x) = compute_S(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints, ℓ)
-        H = comp_hess(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints)
-        return Zygote.withgradient(S,x),  H
+        H_u = comp_hess(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints)
+        m, M, k, K, z, w_z = conformal_map(Symmetric(H_u), ℓ)
+        S(x) = compute_S(Js_, info, x, Zs_, z0_, nlist, indexcheckpoints, ℓ, m, M, k, K, z, w_z)
+        return Zygote.withgradient(S,x),  H_u
     end
+
+    # Thanks to JM_Beckers on Julia Discourse
+    function argsmallest(A::AbstractArray{T,N}, n::Integer) where {T,N}
+        if n >= length(vec(A))
+            ind=collect(1:length(vec(A)))
+            ind=sortperm(A[ind])
+          return CartesianIndices(A)[ind]
+        end
+        ind=collect(1:n)
+        mymax=maximum(A[ind])
+        for j=n+1:length(vec(A))
+            if A[j]<mymax
+                getout=findmax(A[ind])[2]
+                ind[getout]=j
+                mymax=maximum(A[ind])
+            end
+        end
+        ind=ind[sortperm(A[ind])]
+        
+        return CartesianIndices(A)[ind]
+    end
+
+    include("silicon_entropy.jl")
 
 end
