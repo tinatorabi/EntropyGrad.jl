@@ -9,6 +9,11 @@ In its current state, this package serves two purposes:
 
 While the package is not meant for nor setup for user-friendly general use, the interested reader should nevertheless find the code to be straightforward to generalize since it is mostly based on implementing the contour integral formulation correctly, followed by use of automatic differentiation.
 
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/a02fb55b-b8c1-4368-867f-dabe1a7ef0ce" width="300" height="300"/>
+</div>
+
+
 # Installation
 
 The current version has been tested with Julia v1.10.0. Newer Julia releases may work if all the appropriate dependencies can be resolved.
