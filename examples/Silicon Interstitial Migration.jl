@@ -40,7 +40,7 @@ zU = AtomsBase.atomic_number(sys0, 1)
 calc = sw
 
 # Generate an initial guess for the MEP 
-Nimg = 7 # Number of images along the path
+Nimg = 10 # Number of images along the path
 old = deepcopy(position(sys0,65))
 𝐫2 = deepcopy(position(sys1,65))
 path_init = [ (sys = deepcopy(sys0); set_position!(sys, 65, (1-t)*old+t*𝐫2); sys)
@@ -56,7 +56,7 @@ F_init = ustrip(potential_energy.(path_init, Ref(calc))) - Temp*δS
 δF_init = round.( F_init .- F_init[1], digits=4)
 
 # Loop over temperatures and compute paths
-T = [0, 200, 400, 600, 800, 1000]
+T = [0, 200, 400, 600]
 global Estring = []
 global xx_string
 sysoriginal = deepcopy(sys0) # Keep original configuration accessible
@@ -84,10 +84,12 @@ reaction_coords = range(0, stop=1, length=Nimg)
 spline1 = cubic_spline_interpolation(reaction_coords, Estring[1])
 spline2 = cubic_spline_interpolation(reaction_coords, Estring[2])
 spline3 = cubic_spline_interpolation(reaction_coords, Estring[3])
+spline4 = cubic_spline_interpolation(reaction_coords, Estring[4])
 fine_coords = range(0, stop=1, length=300)
 fine_energies1 = [spline1(x) for x in fine_coords]
 fine_energies2 = [spline2(x) for x in fine_coords]
 fine_energies3 = [spline3(x) for x in fine_coords]
+fine_energies4 = [spline4(x) for x in fine_coords]
 plot(fine_coords,  fine_energies1.-fine_energies1[1], label="0K", color=1, xlabel="Reaction Coordinate", ylabel="Free Energy (eV)",legend=:topright)
 plot!(fine_coords, fine_energies2.-fine_energies2[1], label="200K", color=2)
-plot!(fine_coords, fine_energies3.-fine_energies3[1], label="400K", color=3)
+plot!(fine_coords, fine_energies4.-fine_energies4[1], label="600K", color=3)
