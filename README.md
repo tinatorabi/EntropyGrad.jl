@@ -1,4 +1,4 @@
-[TODO: ZENODO BADGE]
+[![DOI](https://zenodo.org/badge/840835414.svg)](https://doi.org/10.5281/zenodo.14510425)
 
 # EntropyGrad.jl
 This Julia package is companion code which contains the examples described in [TODO: PAPER LINK]
