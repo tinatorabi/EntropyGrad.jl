@@ -27,4 +27,4 @@ The examples folder contains scripts with detailed comments. Evaluating line-by-
 
 # References
 
-[TODO: ADD PAPER LINK]
+- Torabi, T., Gutleb, T. S., & Ortner, C. (2024). *Fast automatically differentiable matrix functions and applications in molecular simulations*. [arXiv:2412.12598](https://arxiv.org/abs/2412.12598).
